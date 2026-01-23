@@ -15,7 +15,7 @@ type FunctionTransformer struct {
 	// Spec is the function spec
 	Spec runtimeutil.FunctionSpec `json:"spec,omitempty" yaml:"spec,omitempty"`
 	// Type is the function type. It can be "transformer" or "generator".
-	Type string `json:"type,omitempty" yaml:"type,omitempty"`
+	Type FunctionType `json:"type,omitempty" yaml:"type,omitempty"`
 }
 
 func (f *FunctionTransformer) GetType() FunctionType {
