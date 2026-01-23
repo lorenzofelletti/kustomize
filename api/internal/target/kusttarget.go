@@ -337,10 +337,19 @@ func (kt *KustTarget) configureExternalGenerators() (
 }
 
 func (kt *KustTarget) configureGeneratorsFromFunctions() ([]*resmap.GeneratorWithProperties, error) {
+	ra, err := kt.accumulateFromFunctions(types.GeneratorType)
+	if err != nil {
+		return nil, err
+	}
+
+	return kt.pLdr.LoadGenerators(kt.ldr, kt.validator, ra.ResMap())
+}
+
+func (kt *KustTarget) accumulateFromFunctions(ftype types.FunctionType) (*accumulator.ResAccumulator, error) {
 	ra := accumulator.MakeEmptyAccumulator()
 
 	for _, f := range kt.kustomization.Functions {
-		if f.IsTransformer() {
+		if f.GetType() == ftype {
 			if err := kt.accumulateFile(ra, f.Path, func(rm resmap.ResMap) error {
 				marshaledSpec, err := k8syaml.Marshal(f.Spec)
 				if err != nil {
@@ -353,8 +362,7 @@ func (kt *KustTarget) configureGeneratorsFromFunctions() ([]*resmap.GeneratorWit
 			}
 		}
 	}
-
-	return kt.pLdr.LoadGenerators(kt.ldr, kt.validator, ra.ResMap())
+	return ra, nil
 }
 
 func (kt *KustTarget) runTransformers(ra *accumulator.ResAccumulator) error {
@@ -381,21 +389,9 @@ func (kt *KustTarget) runTransformers(ra *accumulator.ResAccumulator) error {
 }
 
 func (kt *KustTarget) configureTransformersFromFunctions() ([]*resmap.TransformerWithProperties, error) {
-	ra := accumulator.MakeEmptyAccumulator()
-
-	for _, f := range kt.kustomization.Functions {
-		if f.IsTransformer() {
-			if err := kt.accumulateFile(ra, f.Path, func(rm resmap.ResMap) error {
-				marshaledSpec, err := k8syaml.Marshal(f.Spec)
-				if err != nil {
-					return err
-				}
-
-				return rm.AnnotateAll(runtimeutil.FunctionAnnotationKey, string(marshaledSpec))
-			}); err != nil {
-				return nil, err
-			}
-		}
+	ra, err := kt.accumulateFromFunctions(types.TransformerType)
+	if err != nil {
+		return nil, err
 	}
 
 	return kt.pLdr.LoadTransformers(kt.ldr, kt.validator, ra.ResMap())
