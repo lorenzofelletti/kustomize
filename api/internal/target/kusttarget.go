@@ -23,8 +23,10 @@ import (
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/errors"
+	"sigs.k8s.io/kustomize/kyaml/fn/runtime/runtimeutil"
 	"sigs.k8s.io/kustomize/kyaml/openapi"
 	"sigs.k8s.io/yaml"
+	k8syaml "sigs.k8s.io/yaml"
 )
 
 // KustTarget encapsulates the entirety of a kustomization build.
@@ -277,6 +279,13 @@ func (kt *KustTarget) runGenerators(
 		return errors.WrapPrefixf(err, "loading generator plugins")
 	}
 	generators = append(generators, gs...)
+
+	gs, err = kt.configureGeneratorsFromFunctions()
+	if err != nil {
+		return errors.WrapPrefixf(err, "loading generator functions")
+	}
+	generators = append(generators, gs...)
+
 	for i, g := range generators {
 		resMap, err := g.Generate()
 		if err != nil {
@@ -327,6 +336,35 @@ func (kt *KustTarget) configureExternalGenerators() (
 	return kt.pLdr.LoadGenerators(kt.ldr, kt.validator, ra.ResMap())
 }
 
+func (kt *KustTarget) configureGeneratorsFromFunctions() ([]*resmap.GeneratorWithProperties, error) {
+	ra, err := kt.accumulateFromFunctions(types.GeneratorType)
+	if err != nil {
+		return nil, err
+	}
+
+	return kt.pLdr.LoadGenerators(kt.ldr, kt.validator, ra.ResMap())
+}
+
+func (kt *KustTarget) accumulateFromFunctions(ftype types.FunctionType) (*accumulator.ResAccumulator, error) {
+	ra := accumulator.MakeEmptyAccumulator()
+
+	for _, f := range kt.kustomization.Functions {
+		if f.GetType() == ftype {
+			if err := kt.accumulateFile(ra, f.Path, func(rm resmap.ResMap) error {
+				marshaledSpec, err := k8syaml.Marshal(f.Spec)
+				if err != nil {
+					return err
+				}
+
+				return rm.AnnotateAll(runtimeutil.FunctionAnnotationKey, string(marshaledSpec))
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return ra, nil
+}
+
 func (kt *KustTarget) runTransformers(ra *accumulator.ResAccumulator) error {
 	var r []*resmap.TransformerWithProperties
 	tConfig := ra.GetTransformerConfig()
@@ -340,7 +378,23 @@ func (kt *KustTarget) runTransformers(ra *accumulator.ResAccumulator) error {
 		return err
 	}
 	r = append(r, lts...)
+
+	lts, err = kt.configureTransformersFromFunctions()
+	if err != nil {
+		return errors.WrapPrefixf(err, "loading transformer functions")
+	}
+	r = append(r, lts...)
+
 	return ra.Transform(newMultiTransformer(r))
+}
+
+func (kt *KustTarget) configureTransformersFromFunctions() ([]*resmap.TransformerWithProperties, error) {
+	ra, err := kt.accumulateFromFunctions(types.TransformerType)
+	if err != nil {
+		return nil, err
+	}
+
+	return kt.pLdr.LoadTransformers(kt.ldr, kt.validator, ra.ResMap())
 }
 
 func (kt *KustTarget) configureExternalTransformers(transformers []string) ([]*resmap.TransformerWithProperties, error) {
@@ -538,7 +592,7 @@ func (kt *KustTarget) accumulateDirectory(
 }
 
 func (kt *KustTarget) accumulateFile(
-	ra *accumulator.ResAccumulator, path string) error {
+	ra *accumulator.ResAccumulator, path string, fns ...func(resmap.ResMap) error) error {
 	resources, err := kt.rFactory.FromFile(kt.ldr, path)
 	if err != nil {
 		return errors.WrapPrefixf(err, "accumulating resources from '%s'", path)
@@ -557,6 +611,14 @@ func (kt *KustTarget) accumulateFile(
 	if err != nil {
 		return errors.WrapPrefixf(err, "merging resources from '%s'", path)
 	}
+
+	for _, fn := range fns {
+		err = fn(ra.ResMap())
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

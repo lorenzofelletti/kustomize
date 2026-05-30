@@ -175,6 +175,9 @@ type Kustomization struct {
 	// Transformers is a list of files containing transformers
 	Transformers []string `json:"transformers,omitempty" yaml:"transformers,omitempty"`
 
+	// Functions is a list of functions
+	Functions []FunctionTransformer `json:"functions,omitempty" yaml:"functions,omitempty"`
+
 	// Validators is a list of files containing validators
 	Validators []string `json:"validators,omitempty" yaml:"validators,omitempty"`
 
